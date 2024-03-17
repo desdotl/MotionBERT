@@ -3,6 +3,7 @@ import numpy as np
 import os
 import random
 import copy
+import json
 from torch.utils.data import Dataset, DataLoader
 from lib.utils.utils_data import crop_scale, resample
 from lib.utils.tools import read_pkl
@@ -127,6 +128,20 @@ def human_tracking(x):
         x_new[1,1:] = x[0,1:] * sel + x[1,1:] * (1-sel)
         return x_new
 
+def read_input(json_path,keypoints_normalized=False):
+    with open(json_path, "r") as read_file:
+        results = json.load(read_file)
+    kpts_all = []
+    for item in results:
+        if keypoints_normalized:
+          kpts = np.array(item['keypoints_normalized']).reshape([-1,3])
+        else:
+          kpts = np.array(item['keypoints']).reshape([-1,3])
+        kpts_all.append(kpts)
+    kpts_all = np.array(kpts_all)
+    
+    return kpts_all.astype(np.float32)
+
 class ActionDataset(Dataset):
     def __init__(self, data_path, data_split, n_frames=243, random_move=True, scale_range=[1,1], check_split=True):   # data_split: train/test etc.
         np.random.seed(0)
@@ -165,6 +180,57 @@ class ActionDataset(Dataset):
 
     def __getitem__(self, index):
         raise NotImplementedError 
+
+class WildActionDataset(Dataset):
+    def __init__(self, json_path, n_frames=243, vid_shape=None, scale_range=[1,1],keypoints_normalized=False):
+        self.json_path = json_path
+        self.n_frames = n_frames
+        self.scale_range = scale_range
+        self.vid_shape=vid_shape #(height, width)
+        
+        np.random.seed(0)        
+        results=read_input(json_path,keypoints_normalized=keypoints_normalized)
+        ori_len= results.shape[0]
+        
+        motions = []
+        #labels = []
+        
+        keypoints = results[:, :, :2]  
+        score = results[:, :, 2]  
+        keypoints = keypoints[None,...]  
+        score = score[None,...]  
+
+        resample_id = resample(ori_len=ori_len, target_len=n_frames, randomness=False)
+        motion_cam = make_cam(keypoints, img_shape=vid_shape)
+        motion_cam = human_tracking(motion_cam)
+        motion_cam = coco2h36m(motion_cam)
+        motion_conf = score[..., None]
+        motion = np.concatenate((motion_cam[:,resample_id], motion_conf[:,resample_id]), axis=-1)
+        if motion.shape[0]==1:                                  # Single person, make a fake zero person
+            fake = np.zeros(motion.shape)
+            motion = np.concatenate((motion, fake), axis=0)
+        motions.append(motion.astype(np.float32)) 
+        #fake_label=np.zeros(60)
+        #fake_label[0]=1
+        #labels.append(fake_label)
+        self.motions = np.array(motions)
+        #self.labels = np.array(labels)
+        
+    def __len__(self):
+        'Denotes the total number of samples'
+        return len(self.motions)
+
+    def __getitem__(self, idx):
+        'Generates one sample of data'
+        #motion, label = self.motions[idx], self.labels[idx] # (M,T,J,C)
+        motion = self.motions[idx] # (M,T,J,C)
+        if self.scale_range:
+            result = crop_scale(motion, scale_range=self.scale_range)
+        else:
+            result = motion
+        return result.astype(np.float32)
+
+
 
 class NTURGBD(ActionDataset):
     def __init__(self, data_path, data_split, n_frames=243, random_move=True, scale_range=[1,1]):

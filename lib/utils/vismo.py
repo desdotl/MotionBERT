@@ -266,7 +266,7 @@ def motion2video_3d(motion, save_path, fps=25, keep_imgs = False):
         # ax.set_xlabel('X')
         # ax.set_ylabel('Y')
         # ax.set_zlabel('Z')
-        ax.view_init(elev=12., azim=80)
+        ax.view_init(elev=12, azim=80)
         plt.tick_params(left = False, right = False , labelleft = False ,
                         labelbottom = False, bottom = False)
         for i in range(len(joint_pairs)):

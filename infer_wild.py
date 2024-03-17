@@ -22,6 +22,7 @@ def parse_args():
     parser.add_argument('--pixel', action='store_true', help='align with pixle coordinates')
     parser.add_argument('--focus', type=int, default=None, help='target person id')
     parser.add_argument('--clip_len', type=int, default=243, help='clip length for network input')
+    parser.add_argument('-kpn', '--keypoints_normalized',action="store_true", help='chose among using keypoints or normalized keypoints')
     opts = parser.parse_args()
     return opts
 
@@ -35,7 +36,14 @@ if torch.cuda.is_available():
 
 print('Loading checkpoint', opts.evaluate)
 checkpoint = torch.load(opts.evaluate, map_location=lambda storage, loc: storage)
-model_backbone.load_state_dict(checkpoint['model_pos'], strict=True)
+# create new OrderedDict that does not contain `module.`
+from collections import OrderedDict
+new_state_dict = OrderedDict()
+for k, v in checkpoint['model_pos'].items():
+    name = k[7:] # remove `module.`
+    new_state_dict[name] = v
+# load params
+model_backbone.load_state_dict(new_state_dict, strict=True)
 model_pos = model_backbone
 model_pos.eval()
 testloader_params = {
@@ -48,6 +56,7 @@ testloader_params = {
           'drop_last': False
 }
 
+vid_name=opts.vid_path.split('/')[-1].split('.')[-2]
 vid = imageio.get_reader(opts.vid_path,  'ffmpeg')
 fps_in = vid.get_meta_data()['fps']
 vid_size = vid.get_meta_data()['size']
@@ -58,7 +67,7 @@ if opts.pixel:
     wild_dataset = WildDetDataset(opts.json_path, clip_len=opts.clip_len, vid_size=vid_size, scale_range=None, focus=opts.focus)
 else:
     # Scale to [-1,1]
-    wild_dataset = WildDetDataset(opts.json_path, clip_len=opts.clip_len, scale_range=[1,1], focus=opts.focus)
+    wild_dataset = WildDetDataset(opts.json_path, clip_len=opts.clip_len, scale_range=[1,1], focus=opts.focus,keypoints_normalized=opts.keypoints_normalized)
 
 test_loader = DataLoader(wild_dataset, **testloader_params)
 
@@ -89,9 +98,10 @@ with torch.no_grad():
 
 results_all = np.hstack(results_all)
 results_all = np.concatenate(results_all)
-render_and_save(results_all, '%s/X3D.mp4' % (opts.out_path), keep_imgs=False, fps=fps_in)
+
+render_and_save(results_all, '%s_3D.mp4' % os.path.join((opts.out_path),vid_name), keep_imgs=False, fps=fps_in)
 if opts.pixel:
     # Convert to pixel coordinates
     results_all = results_all * (min(vid_size) / 2.0)
     results_all[:,:,:2] = results_all[:,:,:2] + np.array(vid_size) / 2.0
-np.save('%s/X3D.npy' % (opts.out_path), results_all)
+np.save('%s_3D.npy' % os.path.join((opts.out_path),vid_name), results_all)
